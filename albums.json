@@ -1,0 +1,31 @@
+{
+  "1": {
+    "name": "KXX",
+    "description": "KXX",
+    "cover": "K001-Utopia.jpg",
+    "maxSupply": 1000,
+    "tracks": [
+      {
+        "trackNumber": "1",
+        "fileName": "K001-Utopia.mp3",
+        "name": "Utopia",
+        "cover": "K001-Utopia.jpg",
+        "maxSupply": 100
+      },
+      {
+        "trackNumber": "2",
+        "fileName": "K002-Bonfire.mp3",
+        "name": "Bonfire",
+        "cover": "K002-Bonfire.jpg",
+        "maxSupply": 100
+      },
+      {
+        "trackNumber": "3",
+        "fileName": "K003-Royalty.mp3",
+        "name": "Royalty",
+        "cover": "K003-Royalty.jpg",
+        "maxSupply": 100
+      }
+    ]
+  }
+}

@@ -3,13 +3,11 @@ const fs = require('fs');
 const path = require('path');
 const config = require('../config');
 
-async function getMinPrice(songId) {
-    // 檢查是否有特定歌曲的最低價格設定
-    if (config.project.nft.minPrices.songs[songId]) {
-        return hre.ethers.utils.parseEther(config.project.nft.minPrices.songs[songId]);
+async function getMinPrice(albumId) {
+    if (config.project.nft.minPrices.songs[albumId]) {
+        return hre.ethers.utils.parseEther(config.project.nft.minPrices.songs[albumId]);
     }
-    // 否則使用默認最低價格
-    return hre.ethers.utils.parseEther(config.project.nft.minPrices.default || "0.01"); // 默認最低價格 0.01 ETH
+    return hre.ethers.utils.parseEther(config.project.nft.minPrices.default || "0.01");
 }
 
 async function main() {
@@ -19,12 +17,14 @@ async function main() {
     const MusicAlbumNFT = await hre.ethers.getContractFactory("MusicAlbumNFT");
     console.log("📄 Deploying MusicAlbumNFT...");
 
-    const musicAlbumNFT = await MusicAlbumNFT.deploy();
+    const royaltyCreator = config.project.nft.royalty.creator;
+    const royaltySeller = config.project.nft.royalty.seller;
+
+    const musicAlbumNFT = await MusicAlbumNFT.deploy(royaltyCreator, royaltySeller);
     await musicAlbumNFT.deployed();
 
     console.log(` ✅ MusicAlbumNFT deployed to: ${musicAlbumNFT.address}`);
 
-    // 更新配置文件中的合約地址
     if (network === 'sepolia') {
         config.ethereum.contracts.testnet = musicAlbumNFT.address;
     } else if (network === 'mainnet') {
@@ -37,17 +37,15 @@ async function main() {
     );
     console.log('📝 Updated config.js with new contract address');
 
-    // 等待區塊確認
     console.log('⏳ Waiting for block confirmations...');
     await musicAlbumNFT.deployTransaction.wait(5);
 
-    // 驗證合約
     if (process.env.ETHERSCAN_API_KEY) {
         console.log(' 🔍 Verifying contract on Etherscan...');
         try {
             await hre.run("verify:verify", {
                 address: musicAlbumNFT.address,
-                constructorArguments: [],
+                constructorArguments: [royaltyCreator, royaltySeller],
             });
             console.log("✅ Contract verified on Etherscan");
         } catch (error) {
@@ -59,47 +57,103 @@ async function main() {
         }
     }
 
-    // 鑄造 NFT
-    const metadataDir = path.join(__dirname, '../metadata', network === 'sepolia' ? 'testnet/sepolia' : 'mainnet');
-    
-    if (!fs.existsSync(metadataDir)) {
-        console.warn(`⚠️ No metadata directory found at: ${metadataDir}`);
-    } else {
-        const metadataFiles = fs.readdirSync(metadataDir).filter(file => file.endsWith('.json'));
-        
-        if (metadataFiles.length > 0) {
-            console.log('\n🔨 Minting initial NFTs...');
-            
-            for (const file of metadataFiles) {
-                const metadata = JSON.parse(fs.readFileSync(path.join(metadataDir, file)));
-                const minPrice = await getMinPrice(metadata.songId);
+    const albumsPath = path.join(__dirname, '../albums.json');
+    if (!fs.existsSync(albumsPath)) {
+        console.warn('⚠️ No albums.json found');
+        return;
+    }
 
-                console.log(`\n📝 Minting ${metadata.songId}...`);
-                console.log(`Name: ${metadata.songName}`);
-                console.log(`Metadata URI: ipfs://${metadata.metadata.cid}`);
-                console.log(`Minimum Price: ${hre.ethers.utils.formatEther(minPrice)} ETH`);
+    const albums = JSON.parse(fs.readFileSync(albumsPath, 'utf8'));
+
+    for (const [albumId, albumInfo] of Object.entries(albums)) {
+        console.log(`\n📀 Processing album: ${albumInfo.name} (ID: ${albumId})`);
+
+        try {
+            const numericAlbumId = parseInt(albumId);
+            
+            console.log(`Creating album: ${albumInfo.name}`);
+            const createAlbumTx = await musicAlbumNFT.createAlbum(
+                albumInfo.name,
+                albumInfo.cover,
+                albumInfo.tracks.length,
+                albumInfo.maxSupply || 1000
+            );
+            await createAlbumTx.wait();
+
+            let metadataPath = path.join(
+                __dirname,
+                '../metadata',
+                'testnet',
+                'sepolia',
+                `K${albumId}-${albumInfo.name}.json`  // 直接使用 K 前綴
+            );
+
+            console.log(`Looking for metadata at: ${metadataPath}`);
+
+            if (!fs.existsSync(metadataPath)) {
+                console.warn(`⚠️ Metadata not found at ${metadataPath}`);
+                console.log('Trying alternative path...');
                 
+                // 嘗試其他可能的路徑
+                const alternativePath = path.join(
+                    __dirname,
+                    '../metadata',
+                    'testnet',
+                    'sepolia',
+                    `${config.project.artist.prefix}${String(albumId).padStart(3, '0')}-${albumInfo.name}.json`
+                );
+                
+                console.log(`Trying alternative path: ${alternativePath}`);
+                
+                if (!fs.existsSync(alternativePath)) {
+                    console.warn(`⚠️ Metadata also not found at alternative path`);
+                    continue;
+                }
+                
+                console.log('✅ Found metadata at alternative path');
+                metadataPath = alternativePath;
+            }
+
+            const metadata = JSON.parse(fs.readFileSync(metadataPath));
+
+            for (const track of metadata.tracks) {
+                const minPrice = await getMinPrice(albumId);
+                const trackNumber = parseInt(track.trackNumber);
+                
+                console.log(`\n🎵 Minting track ${track.trackNumber}: ${track.trackName}`);
+                console.log(`Metadata URI: ipfs://${track.metadata.cid}`);
+                console.log(`Minimum Price: ${hre.ethers.utils.formatEther(minPrice)} ETH`);
+
                 try {
-                    const tx = await musicAlbumNFT.mintMusic(
-                        metadata.songId + "-" + metadata.songName,
-                        `ipfs://${metadata.metadata.cid}`,
-                        minPrice
+                    const trackConfig = albumInfo.tracks.find(t => parseInt(t.trackNumber) === trackNumber);
+                    const maxSupply = trackConfig?.maxSupply || 100;
+
+                    const tx = await musicAlbumNFT.mintTrack(
+                        numericAlbumId,
+                        trackNumber,
+                        track.trackName,
+                        `ipfs://${track.metadata.cid}`,
+                        minPrice,
+                        maxSupply
                     );
+
                     const receipt = await tx.wait();
-                    console.log(`✨ Successfully minted ${metadata.songId}`);
+                    console.log(`✨ Successfully minted track ${track.trackNumber}`);
                     console.log(`Transaction hash: ${receipt.transactionHash}`);
 
-                    // 從事件中獲取 tokenId
-                    const mintEvent = receipt.events.find(e => e.event === 'MusicMinted');
+                    const mintEvent = receipt.events.find(e => e.event === 'TrackMinted');
                     if (mintEvent) {
                         const tokenId = mintEvent.args.tokenId.toString();
                         console.log(`Token ID: ${tokenId}`);
                         console.log(`🔍 View on OpenSea: https://${network === 'sepolia' ? 'testnets.' : ''}opensea.io/assets/${network}/${musicAlbumNFT.address}/${tokenId}`);
                     }
                 } catch (error) {
-                    console.error(`❌ Error minting ${metadata.songId}:`, error.message);
+                    console.error(`❌ Error minting track ${track.trackNumber}:`, error.message);
                 }
             }
+        } catch (error) {
+            console.error(`❌ Error processing album ${albumId}:`, error.message);
+            console.error(error);
         }
     }
 
