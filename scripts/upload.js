@@ -170,7 +170,15 @@ async function uploadAll(config) {
 
 async function processUpload(musicPath, imagePath, songId, songName, config) {
     try {
-        const metadataDir = path.join(__dirname, '../metadata', config.ethereum.environment);
+        // 直接指定到 sepolia 目錄
+        const metadataDir = path.join(
+            __dirname, 
+            '../metadata',
+            'testnet',
+            'sepolia'
+        );
+        
+        // 確保目錄存在
         if (!fs.existsSync(metadataDir)) {
             fs.mkdirSync(metadataDir, { recursive: true });
         }
